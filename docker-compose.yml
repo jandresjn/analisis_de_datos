@@ -1,16 +1,75 @@
+version: '2'
 services:
   mysql:
-    build: ./mysql/
-    restart: always
-    environment:
-      - MYSQL_ROOT_PASSWORD=root
-      - MYSQL_DATABASE=retail_db
+    image: debezium/example-mysql:1.8
+    container_name: mysql
+    hostname: mysql
+    build:
+      context: ./mysql/
     ports:
-      - '3310:3306'
-    volumes: 
-      - ./mysqldata:/mysql/data
+      - '3306:3306'
+    environment:
+      MYSQL_ROOT_PASSWORD: debezium
+      MYSQL_USER: mysqluser
+      MYSQL_PASSWORD: mysqlpw
+      MYSQL_DATABASE: retail_db
+    volumes:
+      - ./mysqldata:/var/lib/mysql
+      - ./mysql/data_warehouse_netflix.sql:/docker-entrypoint-initdb.d/data_warehouse_netflix.sql
+      - ./mysql/db_movies_neflix_transact.sql:/docker-entrypoint-initdb.d/db_movies_neflix_transact.sql
+      - ./mysql/retail_db.sql:/docker-entrypoint-initdb.d/retail_db.sql
     env_file: 
       - ./mysql/variables.env
-volumes:
-  mysqldata:
-  mongodata:
+
+  zookeeper:
+    image: confluentinc/cp-zookeeper:5.5.3
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - '2181:2181'
+
+  kafka:
+    image: confluentinc/cp-enterprise-kafka:5.5.3
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT://localhost:9092
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    links:
+      - zookeeper
+    ports:
+      - '9092:9092'
+
+  schema-registry:
+    container_name: schema-registry
+    image: confluentinc/cp-schema-registry:4.0.3
+    environment:
+      - SCHEMA_REGISTRY_KAFKASTORE_CONNECTION_URL=zookeeper:2181
+      - SCHEMA_REGISTRY_HOST_NAME=schema-registry
+      - SCHEMA_REGISTRY_LISTENERS=http://schema-registry:8081
+    ports:
+      - '8081:8081'
+
+  kafka-connect:
+    container_name: kafka-connect
+    image: debezium/connect:1.8
+    ports:
+      - '8083:8083'
+    links:
+      - kafka
+      - zookeeper
+    environment:
+      - BOOTSTRAP_SERVERS=kafka:9092
+      - GROUP_ID=medium_debezium
+      - CONFIG_STORAGE_TOPIC=my_connect_configs
+      - CONFIG_STORAGE_REPLICATION_FACTOR=1
+      - OFFSET_STORAGE_TOPIC=my_connect_offsets
+      - OFFSET_STORAGE_REPLICATION_FACTOR=1
+      - STATUS_STORAGE_TOPIC=my_connect_statuses
+      - STATUS_STORAGE_REPLICATION_FACTOR=1
+      - REST_ADVERTISED_HOST_NAME=kafka-connect
